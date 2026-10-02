@@ -1,0 +1,201 @@
+# Kubernetes deployment for GPU-accelerated Kokoro TTS via audio.cpp.
+#
+# audio.cpp ships an OpenAI-compatible POST /v1/audio/speech endpoint, which is
+# exactly what Paseo's `openai` TTS provider calls
+# (packages/server/src/server/speech/providers/openai/tts.ts), so no adapter
+# code is needed — this is config only.
+#
+# GPU notes mirror the granite-asr manifest: there is no NVIDIA device plugin
+# for Vulkan/RADV, so /dev/dri is host-mounted and the pod needs both
+# privileged security context (cgroup v2 device allow-list) and the render/video
+# supplemental groups. Missing either degrades to CPU *silently* — the service
+# still returns 200s, just slower.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kokoro-tts
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kokoro-models
+  namespace: kokoro-tts
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kokoro-tts
+  namespace: kokoro-tts
+  labels:
+    app.kubernetes.io/name: kokoro-tts
+spec:
+  # The GPU is shared; one replica keeps VRAM contention predictable.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kokoro-tts
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kokoro-tts
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: riajul-it
+      securityContext:
+        # root:render (992) / root:video (44) on Ubuntu 24.04. Check yours with
+        # `getent group render video`.
+        supplementalGroups:
+          - 992 # render
+          - 44 # video
+      containers:
+        - name: kokoro-tts
+          image: ghcr.io/iamriajul/kokoro-tts:latest
+          imagePullPolicy: Always
+          securityContext:
+            runAsUser: 0
+            # Required for /dev/dri access under the cgroup v2 devices controller.
+            privileged: true
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: RADV_PERFTEST
+              # Without this Mesa intermittently spills VRAM into GTT on
+              # Polaris, leaving memory clocks low and destroying throughput.
+              value: nogttspill
+            - name: AUDIOCPP_CONFIG
+              value: /etc/audiocpp/server.json
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: dri
+              mountPath: /dev/dri
+            - name: config
+              mountPath: /etc/audiocpp
+          resources:
+            # Measured on the host: ~70m CPU while synthesising, because the
+            # model runs on the GPU. The voice packs and weights live in VRAM.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: kokoro-models
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: config
+          configMap:
+            name: kokoro-tts-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kokoro-tts-config
+  namespace: kokoro-tts
+data:
+  server.json: |
+    {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "backend": "vulkan",
+      "device": 0,
+      "threads": 8,
+      "lazy_load": true,
+      "models": [
+        {
+          "id": "kokoro",
+          "family": "kokoro_tts",
+          "path": "/models/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf",
+          "task": "tts",
+          "mode": "offline",
+          "default_request_options": {
+            "speaking_rate": 1.0,
+            "language": "en-us"
+          },
+          "default_voice_preset": { "voice_id": "af_heart" },
+          "voice_presets": {
+            "heart":   { "voice_id": "af_heart" },
+            "bella":   { "voice_id": "af_bella" },
+            "michael": { "voice_id": "am_michael" }
+          }
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kokoro-tts
+  namespace: kokoro-tts
+  labels:
+    app.kubernetes.io/name: kokoro-tts
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kokoro-tts
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kokoro-tts
+  namespace: kokoro-tts
+  annotations:
+    cert-manager.io/cluster-issuer: cert-manager-global
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  labels:
+    app.kubernetes.io/name: kokoro-tts
+spec:
+  ingressClassName: public
+  rules:
+    - host: tts.riajul.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kokoro-tts
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - tts.riajul.dev
+      secretName: kokoro-tts-tls
