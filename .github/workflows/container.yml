@@ -1,0 +1,78 @@
+name: Container
+
+# Builds the image and publishes it to ghcr.io so the Kubernetes manifest can
+# reference a published artifact instead of an ad-hoc local build.
+#
+# Tags produced:
+#   :main          latest commit on the default branch
+#   :<sha>         immutable per-commit tag
+#   :vX.Y.Z        release tags
+#   :latest        moving tag for the default branch
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Kokoro GGUF is far too large for git and must be fetched at build
+      # time. It must come from the audio-cpp org: only that copy embeds the
+      # audio.cpp model spec, and the server refuses a GGUF without it.
+      - name: Fetch Kokoro GGUF
+        run: |
+          mkdir -p models
+          curl -sL --retry 3 -o models/kokoro-82m-q8_0.gguf \
+            "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf"
+          test "$(stat -c%s models/kokoro-82m-q8_0.gguf)" = "189549408" \
+            || { echo "GGUF size mismatch"; exit 1; }
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # type=ref,event=branch yields the branch name, so pushes to main
+          # publish :main; type=sha gives an immutable per-commit tag; the raw
+          # latest tag follows the default branch.
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # The Vulkan shader build is CPU-heavy, so give the builder real cores.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
