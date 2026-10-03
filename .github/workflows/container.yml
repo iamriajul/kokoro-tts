@@ -38,16 +38,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The Kokoro GGUF is far too large for git and must be fetched at build
-      # time. It must come from the audio-cpp org: only that copy embeds the
-      # audio.cpp model spec, and the server refuses a GGUF without it.
+      # Both the prebuilt audio.cpp binaries and the Kokoro GGUF are fetched at
+      # build time. The GGUF must come from the audio-cpp org specifically: only
+      # that copy embeds the audio.cpp model spec, and audiocpp_server refuses a
+      # GGUF without it — a byte-identical-looking file from another publisher is
+      # rejected with "does not embed an audio.cpp model spec".
+      - name: Fetch prebuilt audio.cpp (portable Vulkan)
+        run: |
+          set -euo pipefail
+          mkdir -p audiocpp
+          curl -sL --retry 3 -o /tmp/acpp.tar.gz \
+            "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.0/audio-v0.9.0-bin-ubuntu-x64-vulkan-portable.tar.gz"
+          # CPU backends are dlopen'd by name, so take the generic x64 variant
+          # plus the versioned SONAME libs. libggml-vulkan.so is the whole point:
+          # it is what lets the server use the GPU.
+          tar xzf /tmp/acpp.tar.gz -C audiocpp \
+            audiocpp_server audiocpp_gguf \
+            libggml-base.so.0 libggml-base.so.0.12.0 \
+            libggml.so.0 libggml.so.0.12.0 \
+            libggml-cpu-x64.so libggml-vulkan.so
+          ls -l audiocpp
+
       - name: Fetch Kokoro GGUF
         run: |
+          set -euo pipefail
           mkdir -p models
           curl -sL --retry 3 -o models/kokoro-82m-q8_0.gguf \
             "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf"
-          test "$(stat -c%s models/kokoro-82m-q8_0.gguf)" = "189549408" \
-            || { echo "GGUF size mismatch"; exit 1; }
+          actual=$(stat -c%s models/kokoro-82m-q8_0.gguf)
+          echo "size: $actual"
+          test "$actual" = "189549408" || { echo "GGUF size mismatch"; exit 1; }
 
       - name: Derive tags and labels
         id: meta
