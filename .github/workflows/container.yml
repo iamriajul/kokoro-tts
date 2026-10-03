@@ -58,6 +58,9 @@ jobs:
             ./libggml-base.so.0 ./libggml-base.so.0.12.0 \
             ./libggml.so.0 ./libggml.so.0.12.0 \
             ./libggml-cpu-x64.so ./libggml-vulkan.so
+          # The alias shim is committed in this repo; it must sit alongside the
+          # binaries in the same audiocpp/ directory the Dockerfile copies.
+          cp "${GITHUB_WORKSPACE}/alias-proxy.py" audiocpp/alias-proxy.py
           ls -l audiocpp
 
       - name: Fetch Kokoro GGUF
