@@ -37,4 +37,8 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
   CMD curl -fsS http://127.0.0.1:8080/health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/audiocpp_server"]
+
+
+# audiocpp_server does not read AUDIOCPP_CONFIG from the environment; it
+# requires an explicit --config argument or it exits immediately.
+ENTRYPOINT ["/usr/local/bin/audiocpp_server", "--config", "/etc/audiocpp/server.json"]
