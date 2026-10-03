@@ -52,11 +52,12 @@ jobs:
           # CPU backends are dlopen'd by name, so take the generic x64 variant
           # plus the versioned SONAME libs. libggml-vulkan.so is the whole point:
           # it is what lets the server use the GPU.
+          # Members are stored with a leading ./ so extraction must match.
           tar xzf /tmp/acpp.tar.gz -C audiocpp \
-            audiocpp_server audiocpp_gguf \
-            libggml-base.so.0 libggml-base.so.0.12.0 \
-            libggml.so.0 libggml.so.0.12.0 \
-            libggml-cpu-x64.so libggml-vulkan.so
+            ./audiocpp_server ./audiocpp_gguf \
+            ./libggml-base.so.0 ./libggml-base.so.0.12.0 \
+            ./libggml.so.0 ./libggml.so.0.12.0 \
+            ./libggml-cpu-x64.so ./libggml-vulkan.so
           ls -l audiocpp
 
       - name: Fetch Kokoro GGUF
