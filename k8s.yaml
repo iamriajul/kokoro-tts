@@ -192,7 +192,108 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: kokoro-tts
+                # The alias service, not kokoro-tts directly: Paseo sends
+                # "tts-1"/"tts-1-hd" and audio.cpp only accepts "kokoro".
+                name: kokoro-alias
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - tts.riajul.dev
+      secretName: kokoro-tts-tls---
+# Model-alias shim. Paseo's OpenAI TTS provider validates its model id against
+# a closed enum ("tts-1" | "tts-1-hd"), so it cannot be pointed at audio.cpp's
+# "kokoro" id — config parsing throws before any request is made. audio.cpp
+# likewise rejects the ids Paseo sends. This rewrites the id in transit.
+#
+# Only /v1/audio/speech is rewritten; every other path passes straight through,
+# so /health and /v1/models keep working unchanged.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kokoro-alias
+  namespace: kokoro-tts
+  labels:
+    app.kubernetes.io/name: kokoro-alias
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kokoro-alias
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kokoro-alias
+    spec:
+      containers:
+        - name: alias
+          # Same image as the upstream service: it only needs python3.
+          image: ghcr.io/iamriajul/kokoro-tts:latest
+          imagePullPolicy: Always
+          workingDir: /
+          command: ["python3", "/opt/alias/alias-proxy.py"]
+          env:
+            - name: ASR_UPSTREAM
+              value: "http://kokoro-tts:80"
+            - name: UPSTREAM_MODEL
+              value: kokoro
+            - name: PORT
+              value: "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kokoro-alias
+  namespace: kokoro-tts
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kokoro-alias
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kokoro-tts
+  namespace: kokoro-tts
+  annotations:
+    cert-manager.io/cluster-issuer: cert-manager-global
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  labels:
+    app.kubernetes.io/name: kokoro-tts
+spec:
+  ingressClassName: public
+  rules:
+    - host: tts.riajul.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # kokoro-alias, not kokoro-tts: Paseo sends "tts-1"/"tts-1-hd"
+                # and audio.cpp only accepts "kokoro". The shim rewrites it.
+                name: kokoro-alias
                 port:
                   name: http
   tls:

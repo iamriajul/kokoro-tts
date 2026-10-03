@@ -27,6 +27,7 @@ RUN set -eux; \
     install -Dm755 /tmp/acpp/audiocpp_gguf   /usr/local/bin/audiocpp_gguf; \
     # shared ggml backends; libggml-vulkan.so is what makes the GPU path work
     for lib in /tmp/acpp/libggml*.so*; do install -Dm755 "$lib" "/usr/local/lib/$(basename "$lib")"; done; \
+    install -Dm755 /tmp/acpp/alias-proxy.py /opt/alias/alias-proxy.py; \
     rm -rf /tmp/acpp
 
 ENV LD_LIBRARY_PATH=/usr/local/lib \
