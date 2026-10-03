@@ -97,3 +97,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Container packages are created with private visibility on first push,
+      # which makes them unpullable anonymously — the kubelet then sits in
+      # ImagePullBackOff because the deployment manifest carries no
+      # imagePullSecrets. Make the package public so a plain ghcr reference works.
+      - name: Set package visibility to public
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const parts = '${{ env.IMAGE_NAME }}'.split('/');
+            const name = parts[parts.length - 1];
+            const opts = { package_type: 'container', package_name: name, visibility: 'public' };
+            if (parts.length > 1) opts.org = parts[0];
+            await github.rest.packages.updatePackageVisibility(opts);
+            console.log(`visibility set to public: ${parts.join('/')}`);
