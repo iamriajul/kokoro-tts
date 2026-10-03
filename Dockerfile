@@ -38,7 +38,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
   CMD curl -fsS http://127.0.0.1:8080/health || exit 1
 
 
-
 # audiocpp_server does not read AUDIOCPP_CONFIG from the environment; it
 # requires an explicit --config argument or it exits immediately.
+# audio.cpp resolves its ggml backends (libggml-vulkan.so and friends) relative
+# to the process working directory, not to the binary location. With the
+# default "/" the loader finds no backends and exits with:
+#   Vulkan backend requested but it is not registered in this build (available: none)
+# Running from the directory holding the ggml libraries makes the dlopen succeed.
+WORKDIR /usr/local/lib
 ENTRYPOINT ["/usr/local/bin/audiocpp_server", "--config", "/etc/audiocpp/server.json"]
