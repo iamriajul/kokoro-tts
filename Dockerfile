@@ -20,7 +20,8 @@ COPY models/ /models/
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl ffmpeg libvulkan1 mesa-vulkan-drivers libopenblas0; \
+      ca-certificates curl ffmpeg libvulkan1 mesa-vulkan-drivers libopenblas0 \
+      libespeak-ng1 espeak-ng-data; \
     rm -rf /var/lib/apt/lists/*; \
     install -Dm755 /tmp/acpp/audiocpp_server /usr/local/bin/audiocpp_server; \
     install -Dm755 /tmp/acpp/audiocpp_gguf   /usr/local/bin/audiocpp_gguf; \
