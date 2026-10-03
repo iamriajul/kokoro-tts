@@ -115,13 +115,15 @@ jobs:
                 package { id visibility }
               }
             }`;
-            const find = `query($owner: String!, $name: String!) {
-              viewer { packages(first: 100, packageType: CONTAINER) {
+            // `viewer.packages` is not exposed on the User type; the account's
+            // own packages are queried through `user(login:)`.
+            const find = `query($login: String!) {
+              user(login: $login) { packages(first: 100, packageType: CONTAINER) {
                 nodes { id name packageType visibility }
               } }
             }`;
-            const { viewer } = await github.graphql(find);
-            const pkg = viewer.packages.nodes.find(p => p.name === name);
+            const { user } = await github.graphql(find, { login: owner });
+            const pkg = user.packages.nodes.find(p => p.name === name);
             if (!pkg) throw new Error(`package ${name} not found in ${owner}'s container packages`);
             if (pkg.visibility === 'PUBLIC') { console.log(`${name} already public`); return; }
             await github.graphql(q, { id: pkg.id });
